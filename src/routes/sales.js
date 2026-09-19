@@ -192,15 +192,15 @@ router.post("/", writeLimiter, requireSubscription, async (req, res, next) => {
       // code path just because the debt came from a sale instead of a
       // manually-typed amount.
       await client.query(
-        `INSERT INTO transactions (owner_id, customer_id, type, amount, payment_method, status, sale_id)
-         VALUES ($1, $2, 'add', $3, 'cash', 'pending', $4)`,
+        `INSERT INTO transactions (owner_id, customer_id, type, amount, payment_method, status, sale_id, reference)
+         VALUES ($1, $2, 'add', $3, 'cash', 'pending', $4, 'Added via Sale')`,
         [req.ownerId, customerId, totalAmount, sale.id]
       );
 
       if (data.amountPaid > 0) {
         await client.query(
-          `INSERT INTO transactions (owner_id, customer_id, type, amount, payment_method, status, sale_id)
-           VALUES ($1, $2, 'deduct', $3, 'cash', 'cleared', $4)`,
+          `INSERT INTO transactions (owner_id, customer_id, type, amount, payment_method, status, sale_id, reference)
+           VALUES ($1, $2, 'deduct', $3, 'cash', 'cleared', $4, 'Paid via Sale')`,
           [req.ownerId, customerId, data.amountPaid, sale.id]
         );
       }
