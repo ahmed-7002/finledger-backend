@@ -106,6 +106,30 @@ export const idParamSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Payment submissions: customer-uploaded bank transfer receipts, reviewed
+// by the shop owner before anything touches the real ledger.
+// ---------------------------------------------------------------------------
+
+// Submitted from the PUBLIC share-record page - no auth, so kept
+// deliberately minimal. The receipt image itself is handled by multer /
+// file-type sniffing in the route, not by this schema.
+export const paymentSubmissionCreateSchema = z.object({
+  amount: z.coerce.number().positive().max(100000000),
+});
+
+// The shop owner can override the claimed amount at approval time (e.g. to
+// fix a simple typo without forcing a full reject-and-resubmit cycle).
+export const paymentSubmissionApproveSchema = z.object({
+  amount: z.coerce.number().positive().max(100000000).optional(),
+  reference: z.string().trim().max(200).transform(stripControlChars).optional(),
+});
+
+// Reason is optional - the shop owner isn't required to explain a rejection.
+export const paymentSubmissionRejectSchema = z.object({
+  reason: z.string().trim().max(300).transform(stripControlChars).optional(),
+});
+
+// ---------------------------------------------------------------------------
 // Point of Sale: items catalog + sales/checkout
 // ---------------------------------------------------------------------------
 

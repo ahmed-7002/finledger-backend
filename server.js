@@ -16,6 +16,7 @@ import transactionRoutes from "./src/routes/transactions.js";
 import publicRoutes from "./src/routes/public.js";
 import itemRoutes from "./src/routes/items.js";
 import saleRoutes from "./src/routes/sales.js";
+import paymentSubmissionRoutes from "./src/routes/paymentSubmissions.js";
 
 // Fail fast if a required secret is missing - before the app even starts,
 // not on the first request that happens to need it.
@@ -107,10 +108,26 @@ app.use("/api/customers", requireAuth, customerRoutes);
 app.use("/api/transactions", requireAuth, transactionRoutes);
 app.use("/api/items", requireAuth, itemRoutes);
 app.use("/api/sales", requireAuth, saleRoutes);
+app.use("/api/payment-submissions", requireAuth, paymentSubmissionRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
 
-app.listen(PORT, () => {
-  console.log(`[server] Khaatabook API listening on port ${PORT}`);
-});
+// Vercel's Fluid compute wraps this exported app as a single serverless
+// function - it does NOT need app.listen() to actually work there (Vercel
+// intercepts requests before they'd ever reach a real socket), but keeping
+// the guard below means the exact same file still runs correctly as a
+// normal, always-on server locally or on any other host (Render, Railway,
+// a VPS) with zero changes. Skipping app.listen() specifically in
+// production avoids attempting to bind a port in an environment that
+// doesn't expect one.
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => {
+    console.log(`[server] Khaatabook API listening on port ${PORT}`);
+  });
+}
+
+// Required for Vercel's zero-configuration Express detection - it looks
+// for a default export of the app (or a plain app.listen() call - either
+// pattern works) in server.js/app.js/index.js at the project root.
+export default app;
