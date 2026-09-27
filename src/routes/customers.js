@@ -1,6 +1,6 @@
 import { Router } from "express";
 import crypto from "crypto";
-import { query } from "../db.js";
+import { pool, query } from "../db.js";
 import { requireSubscription } from "../middleware/requireSubscription.js";
 import { writeLimiter } from "../middleware/rateLimiters.js";
 import { CUSTOMER_LIMIT } from "../config/plan.js";
@@ -68,13 +68,29 @@ router.get("/:id/transactions", async (req, res, next) => {
   }
 });
 
-// POST /api/customers - gated behind an active subscription (the paywall),
-// and additionally capped at CUSTOMER_LIMIT customers per tenant. The cap is
-// a billing/plan limit, not a database limit - Neon can hold far more per
-// tenant than this; it exists to give the paywall pitch a concrete number.
+/**
+ * POST /api/customers
+ * ----------------------------------------------------------------------
+ * Creates a new customer, optionally with an initial debt amount set right
+ * away - so an owner adding a customer who already owes them something
+ * doesn't have to separately navigate to Record Transaction afterward.
+ *
+ * When an initial debt is given, the customer row AND the corresponding
+ * 'add' transaction are created atomically in one database transaction -
+ * matching the same pattern already used for POS sales - so a failure
+ * partway through can never leave a customer created with a debt amount
+ * that has no matching transaction history entry to explain it.
+ *
+ * Also gated behind an active subscription (the paywall), and capped at
+ * CUSTOMER_LIMIT customers per tenant. The cap is a billing/plan limit, not
+ * a database limit - Neon can hold far more per tenant than this; it
+ * exists to give the paywall pitch a concrete number.
+ * ----------------------------------------------------------------------
+ */
 router.post("/", writeLimiter, requireSubscription, async (req, res, next) => {
+  const client = await pool.connect();
   try {
-    const countRes = await query(
+    const countRes = await client.query(
       "SELECT COUNT(*)::int AS count FROM customers WHERE owner_id = $1",
       [req.ownerId]
     );
@@ -90,10 +106,13 @@ router.post("/", writeLimiter, requireSubscription, async (req, res, next) => {
     }
 
     const data = customerCreateSchema.parse(req.body);
+    const initialDebt = data.initialDebtAmount ?? 0;
 
-    const { rows } = await query(
-      `INSERT INTO customers (owner_id, name, phone, phone_verified, national_id, client_uuid)
-       VALUES ($1, $2, $3, $4, $5, $6)
+    await client.query("BEGIN");
+
+    const { rows } = await client.query(
+      `INSERT INTO customers (owner_id, name, phone, phone_verified, national_id, pending_amount, client_uuid)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (owner_id, client_uuid) WHERE client_uuid IS NOT NULL
        DO UPDATE SET name = EXCLUDED.name, updated_at = now()
        RETURNING *`,
@@ -103,13 +122,32 @@ router.post("/", writeLimiter, requireSubscription, async (req, res, next) => {
         data.phone,
         data.phoneVerified ?? false,
         data.nationalId ?? null,
+        initialDebt,
         data.clientUuid ?? null,
       ]
     );
 
-    res.status(201).json(rows[0]);
+    const customer = rows[0];
+
+    // Give this opening balance the same paper trail every other debt-
+    // creating action in the app gets - a real transaction row, not just a
+    // number quietly set on the customer.
+    if (initialDebt > 0) {
+      await client.query(
+        `INSERT INTO transactions (owner_id, customer_id, type, amount, payment_method, status, reference)
+         VALUES ($1, $2, 'add', $3, 'cash', 'pending', 'Opening balance')`,
+        [req.ownerId, customer.id, initialDebt]
+      );
+    }
+
+    await client.query("COMMIT");
+
+    res.status(201).json(customer);
   } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
     next(err);
+  } finally {
+    client.release();
   }
 });
 

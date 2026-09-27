@@ -38,6 +38,11 @@ export const customerCreateSchema = z.object({
   // never trust it as a strong identity guarantee, just a light sanity check.
   phoneVerified: z.boolean().optional().default(false),
   nationalId: z.string().trim().max(30).transform(stripControlChars).optional().nullable(),
+  // Lets the owner set an opening balance right when adding a customer,
+  // instead of separately navigating to Record Transaction afterward.
+  // Optional, defaults to 0 when omitted - see routes/customers.js for how
+  // this atomically creates the matching 'add' transaction too.
+  initialDebtAmount: z.coerce.number().min(0).max(100000000).optional(),
   clientUuid: z.string().uuid().optional(), // for offline optimistic sync reconciliation
 });
 
